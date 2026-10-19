@@ -56,7 +56,30 @@ else
   exit 1
 fi
 
+RESPONSES_UTILS_TARGET="$SITE_PACKAGES/vllm/entrypoints/openai/responses/utils.py"
+RESPONSES_UTILS_PATCH="$ROOT/patches/vllm-responses-encrypted-reasoning.patch"
+RESPONSES_UTILS_PATCHED='Ignoring unsupported encrypted reasoning item %s.'
+
+test -f "$RESPONSES_UTILS_TARGET" || {
+  echo "Responses API utils source not found: $RESPONSES_UTILS_TARGET" >&2
+  exit 1
+}
+
+if grep -Fq "$RESPONSES_UTILS_PATCHED" "$RESPONSES_UTILS_TARGET"; then
+  echo 'Codex encrypted reasoning patch already applied.'
+elif grep -Fq 'raise ValueError("Encrypted content is not supported.")' "$RESPONSES_UTILS_TARGET"; then
+  patch --batch --forward -d "$SITE_PACKAGES" -p1 -i "$RESPONSES_UTILS_PATCH"
+  echo 'Applied Codex encrypted reasoning patch.'
+else
+  echo 'Unsupported Responses API utils version; refusing to patch.' >&2
+  exit 1
+fi
+
 "$PYTHON" - <<'PY'
+from openai.types.responses import ResponseReasoningItem
+from vllm.entrypoints.openai.responses.utils import (
+    _construct_message_from_response_item,
+)
 from vllm.tokenizers.deepseek_v41 import _normalize_messages
 
 messages = [{
@@ -66,6 +89,15 @@ messages = [{
 normalized = _normalize_messages(messages)
 assert normalized[0]["content"] == "CODEX-OK"
 print("Codex Responses input_text normalization passed.")
+
+encrypted_reasoning = ResponseReasoningItem(
+    id="rs_codex_compaction",
+    summary=[],
+    type="reasoning",
+    encrypted_content="opaque-codex-reasoning",
+)
+assert _construct_message_from_response_item(encrypted_reasoning) is None
+print("Codex encrypted reasoning normalization passed.")
 PY
 
 grep -Fq "$REJECTION_PATCHED" "$REJECTION_TARGET"

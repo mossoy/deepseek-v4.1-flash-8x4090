@@ -50,8 +50,9 @@ FP8 主权重、FP4 expert、dynamic activation quantization；文件大小与�
 | 32K / 128 | 1 | 4.442 s | 23.1 tok/s | 115.6 tok/s |
 | 261,888 / 64 | 1 | 59.501 s | 1.1 tok/s | 140.8 tok/s |
 
-文本 Chat Completions、Codex 结构化 `input_text` Responses 和同一 prompt 双图
-`input_image` Responses 均已通过。新实例的 KV cache 容量为 971,807 tokens，
+文本 Chat Completions、Codex 结构化 `input_text` Responses、带
+`encrypted_content` 的压缩请求和同一 prompt 双图 `input_image` Responses 均已
+通过。新实例的 KV cache 容量为 971,807 tokens，
 可容纳约 3.71 个 256K 序列；261,888-token 边界请求完成且未 OOM。
 机器可读数据见
 [`results/benchmark-1017-summary.json`](results/benchmark-1017-summary.json)。
@@ -371,6 +372,7 @@ memory access。默认 `FULL_AND_PIECEWISE` 稳定，并完成 decode graph capt
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
+- Codex 压缩请求中的 `reasoning.encrypted_content`
 - Responses API 的 `input_image` 双图输入
 - DeepSeek V4.1 reasoning parser
 - 自动工具调用 parser
@@ -388,6 +390,12 @@ Codex 使用 Responses API 的结构化内容块：
 [`patches/vllm-deepseek-v41-responses.patch`](patches/vllm-deepseek-v41-responses.patch)
 补齐 `input_text` / `output_text` 归一化，`setup_env.sh` 会自动应用并做幂等检查。
 `tools/smoke-test.sh` 使用 Codex 同款结构化请求验证 `/v1/responses`。
+
+Codex 压缩会回传 OpenAI 托管模型生成的 opaque `encrypted_content`。本地模型无法
+解密这段隐藏 reasoning；上游 vLLM 默认直接返回 `400`。本仓库的
+[`patches/vllm-responses-encrypted-reasoning.patch`](patches/vllm-responses-encrypted-reasoning.patch)
+会优先保留明文 reasoning content/summary，仅在没有明文时忽略密文项，保留其余对话
+和工具调用。冒烟测试使用同样的 reasoning item 验证压缩路径。
 
 默认允许每个 prompt 两张图片，与上游 8 x 4090 示例一致：
 
@@ -422,7 +430,8 @@ MAX_IMAGES_PER_PROMPT=2
 ├── launch.sh
 ├── patches/
 │   ├── vllm-adaptive-verification-bounds.patch
-│   └── vllm-deepseek-v41-responses.patch
+│   ├── vllm-deepseek-v41-responses.patch
+│   └── vllm-responses-encrypted-reasoning.patch
 ├── setup_env.sh
 ├── results/
 │   ├── benchmark-1017-summary.json

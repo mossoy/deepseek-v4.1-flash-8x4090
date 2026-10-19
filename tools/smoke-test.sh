@@ -48,6 +48,12 @@ responses_response=$(curl --noproxy '*' --fail --silent --show-error \
   -d "{\"model\":\"$MODEL\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Reply with exactly: RESPONSES-OK\"}]}],\"temperature\":0,\"max_output_tokens\":128}")
 printf '%s' "$responses_response" | assert_exact_output responses RESPONSES-OK
 
+compact_response=$(curl --noproxy '*' --fail --silent --show-error \
+  "$BASE_URL/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"$MODEL\",\"input\":[{\"type\":\"reasoning\",\"id\":\"rs_codex_compaction\",\"summary\":[],\"encrypted_content\":\"opaque-codex-reasoning\"},{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Reply with exactly: COMPACT-OK\"}]}],\"temperature\":0,\"max_output_tokens\":128}")
+printf '%s' "$compact_response" | assert_exact_output compaction COMPACT-OK
+
 if [[ "${ENABLE_VISION:-1}" == "1" ]]; then
   image_response=$(curl --noproxy '*' --fail --silent --show-error \
     "$BASE_URL/v1/responses" \

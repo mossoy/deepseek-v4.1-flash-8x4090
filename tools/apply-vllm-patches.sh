@@ -37,6 +37,25 @@ else
   exit 1
 fi
 
+REJECTION_TARGET="$SITE_PACKAGES/vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py"
+REJECTION_PATCH="$ROOT/patches/vllm-adaptive-verification-bounds.patch"
+REJECTION_PATCHED='if logit_idx + 1 >= tl.num_programs(0):'
+
+test -f "$REJECTION_TARGET" || {
+  echo "Speculative rejection sampler source not found: $REJECTION_TARGET" >&2
+  exit 1
+}
+
+if grep -Fq "$REJECTION_PATCHED" "$REJECTION_TARGET"; then
+  echo 'Adaptive verification bounds patch already applied.'
+elif grep -Fq 'def _compute_local_residual_mass_kernel(' "$REJECTION_TARGET"; then
+  patch --batch --forward -d "$SITE_PACKAGES" -p1 -i "$REJECTION_PATCH"
+  echo 'Applied adaptive verification bounds patch.'
+else
+  echo 'Unsupported rejection_sampler_utils.py version; refusing to patch.' >&2
+  exit 1
+fi
+
 "$PYTHON" - <<'PY'
 from vllm.tokenizers.deepseek_v41 import _normalize_messages
 
@@ -48,3 +67,6 @@ normalized = _normalize_messages(messages)
 assert normalized[0]["content"] == "CODEX-OK"
 print("Codex Responses input_text normalization passed.")
 PY
+
+grep -Fq "$REJECTION_PATCHED" "$REJECTION_TARGET"
+echo 'Adaptive verification bounds check passed.'

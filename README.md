@@ -1,9 +1,9 @@
-# 8 x RTX 4090 48GB 部署 DeepSeek-V4.1-Flash：256K 实测与优化
+# 8 x RTX 4090 48GB 部署 DeepSeek-V4.1-Flash-1017：256K 实测与优化
 
 > 在无 NVLink、无 CUDA P2P、双 NUMA 的单机 8 卡环境中，记录
-> DeepSeek-V4.1-Flash 的可复现部署、失败条件、参数 A/B 和长上下文性能。
+> DeepSeek-V4.1-Flash-1017 的可复现部署、失败条件、参数 A/B 和长上下文性能。
 
-最后更新：2026-09-22
+最后更新：2026-10-19
 
 ## 结论
 
@@ -13,10 +13,10 @@
 `MAX_NUM_SEQS=3`，并发对比见下节。公开模板仍默认单请求。
 
 ```text
-deepseek-ai/DeepSeek-V4.1-Flash 官方 checkpoint
+deepseek-ai/DeepSeek-V4.1-Flash-1017 官方 checkpoint
 + yhfgyyf/vllm-deepseek-v4-sm89 Vision11 wheel
 + TP8 / EP8 / FP8 KV / Engram CPU offload
-+ DSpark 5 adaptive verification
++ DSpark 3 adaptive verification
 + CED prefill
 + prefix caching
 + two-image input for Codex / Responses API
@@ -24,14 +24,53 @@ deepseek-ai/DeepSeek-V4.1-Flash 官方 checkpoint
 + 256K context / 单请求低延迟
 ```
 
-初始保守配置的单流 decode 约为 **11 token/s**。最终配置在随机输入基准中达到
-**120-149 token/s decode**，接近 256K 的 261,888-token 请求完成且未 OOM。
+上一版 checkpoint 从初始保守配置的约 **11 token/s** 优化到随机输入下
+**120-149 token/s decode**，并完成接近 256K 的 261,888-token 请求。1017 权重的
+短基准为 **104-141 token/s decode**；两代权重的 DSpark 接受率不同，数字不能直接
+当作引擎回归。
 
 这不是新的推理引擎或 kernel fork。模型支持、SM89 kernel、DSpark、CED 和 adaptive
 verification 均来自
 [yhfgyyf/vllm-deepseek-v4-sm89](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89)。
 本仓库提供的是 8 x 48GB RTX 4090、无 P2P、256K 单用户场景的部署封装、参数取舍、
 失败复现和同机实测。
+
+### 1017 部署验证
+
+2026-10-19 下载的 1017 checkpoint 为 48 个 safetensors 分片、约 475 GiB。配置仍是
+FP8 主权重、FP4 expert、dynamic activation quantization；文件大小与上一版一致，
+但全部 48 个权重分片哈希均已变化，不是旧权重的重命名。
+
+当前 3 路服务使用 DSpark 3 adaptive。单并发随机输入、temperature 0、ignore EOS：
+
+| 输入 / 输出 | 请求数 | 平均 TTFT | 总输出吞吐 | Decode |
+|---:|---:|---:|---:|---:|
+| 1K / 256 | 3 | 0.251 s | 94.7 tok/s | 104.0 tok/s |
+| 8K / 512 | 3 | 1.662 s | 89.7 tok/s | 126.2 tok/s |
+| 32K / 128 | 1 | 4.442 s | 23.1 tok/s | 115.6 tok/s |
+| 261,888 / 64 | 1 | 59.501 s | 1.1 tok/s | 140.8 tok/s |
+
+文本 Chat Completions、Codex 结构化 `input_text` Responses 和同一 prompt 双图
+`input_image` Responses 均已通过。新实例的 KV cache 容量为 971,807 tokens，
+可容纳约 3.71 个 256K 序列；261,888-token 边界请求完成且未 OOM。
+机器可读数据见
+[`results/benchmark-1017-summary.json`](results/benchmark-1017-summary.json)。
+
+### 2026-10-19 上游路线复核
+
+- [yhfgyyf/vllm-deepseek-v4-sm89](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89)
+  仍是唯一明确验证 DeepSeek V4.1 + RTX 4090/SM89 的实现；近期开放改动主要是
+  CED KV offload，没有新的 4090 decode 加速路径。
+- 官方 [vLLM](https://github.com/vllm-project/vllm) 已加入更多 V4.1 优化，但公开收益
+  主要来自 B200/GB200/H20，没有 8 x 4090 的可复现实测。
+- [SGLang](https://github.com/sgl-project/sglang) 的新版报告了 256K prefill 改进，公开
+  数据使用 4 x B200；当前没有 V4.1 + SM89 验证。
+- [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 V4.1 支持仍未形成适合本机的
+  已合并、已验证高性能方案。
+
+因此继续使用现有 SM89 wheel，比为未验证的新引擎重下依赖或重编译风险更低。额外
+回移了官方 vLLM [#60945](https://github.com/vllm-project/vllm/pull/60945) 的 adaptive
+DSpark 边界检查，避免极端 batch shape 下 residual-mass kernel 越界。
 
 ## 本仓库补充了什么
 
@@ -53,9 +92,10 @@ Triton `CUDA illegal memory access`。移除显式 FULL 后，vLLM 默认采用
 `FULL_AND_PIECEWISE`，decode 仍使用图捕获，同时 DSpark 5 adaptive、CED 和
 256K 请求均能稳定运行。
 
-## 最终性能
+## 上一版 checkpoint 完整性能
 
-以下为 `vllm bench serve` 单并发随机输入，temperature 0、ignore EOS。Decode
+以下为 2026-09-16 上一版 `DeepSeek-V4.1-Flash` 的 `vllm bench serve` 单并发
+随机输入，temperature 0、ignore EOS。Decode
 由 `1000 / mean TPOT(ms)` 计算。CED 开启后并非完整 prefill 计算，因此下表的
 prefill 是 `input tokens / TTFT` 代理指标，不能当作精确 FLOPS 吞吐。
 
@@ -92,9 +132,10 @@ prefill 是 `input tokens / TTFT` 代理指标，不能当作精确 FLOPS 吞吐
 机器可读的汇总位于
 [`results/benchmark-summary.json`](results/benchmark-summary.json)。
 
-## 多用户并发
+## 上一版 checkpoint 多用户并发
 
-2026-09-17 在保留图片输入、256K、DSpark 5 adaptive、CED、4096 batch tokens 和
+2026-09-17 使用上一版 checkpoint，在保留图片输入、256K、DSpark 5 adaptive、
+CED、4096 batch tokens 和
 0.92 显存利用率的情况下，将服务端调度上限临时设为 4，实测客户端 1/2/3/4 路。
 每档 8 个约 8K 输入 / 512 输出请求，temperature=0、ignore EOS，64 个正式对比
 请求均成功。未测试更高并发或持续数小时的压测。
@@ -177,7 +218,7 @@ bash tools/benchmark-concurrency.sh
 
 | 组件 | 版本 |
 |---|---|
-| Model | `deepseek-ai/DeepSeek-V4.1-Flash`，48 shards，475.25 GiB |
+| Model | `deepseek-ai/DeepSeek-V4.1-Flash-1017`，48 shards，475.25 GiB |
 | vLLM | `0.28.1rc1.dev517+glm53.dsv41.vision11.sm89sm120.cu130` |
 | FlashInfer | `0.6.18+glm53.dsv41.vision2.sm89sm120.cu130.pt213` |
 | Transformers | `5.16.1` |
@@ -268,7 +309,7 @@ journalctl --user -u deepseek-v4.1-flash.service -f
 
 ```bash
 ./tools/passkey-test.py \
-  --model-dir /data/models/DeepSeek-V4.1-Flash \
+  --model-dir /data/models/DeepSeek-V4.1-Flash-1017 \
   --tokens 32000
 ```
 
@@ -279,9 +320,17 @@ CED 对代码、推理和所有长上下文任务都质量无损。
 
 ### DSpark 3 与 DSpark 5 adaptive
 
-DSpark 3 已能达到上游 Issue #108 报告的百 token/s 级别。相同 8K / 512 随机负载
-下，DSpark 5 adaptive 的 mean TPOT 为 6.70 ms，DSpark 3 为 6.93 ms，约快 3.3%。
-提升不大，但 DSpark 5 adaptive 与当前上游推荐一致，因此作为默认配置。
+上一版 checkpoint 的相同 8K / 512 随机负载下，DSpark 5 adaptive 的 mean TPOT
+为 6.70 ms，DSpark 3 为 6.93 ms，因此当时使用 5。1017 权重的 late-position
+draft 接受率明显更低，重新 A/B 后改为 DSpark 3：
+
+| 输入 / 输出 | DSpark 5 decode | DSpark 3 decode | 变化 |
+|---:|---:|---:|---:|
+| 1K / 256 | 94.2 tok/s | 104.0 tok/s | +10.4% |
+| 8K / 512 | 123.6 tok/s | 126.2 tok/s | +2.1% |
+
+两档测试的随机 seed、请求数和其余服务参数相同，均在服务重启后运行。基于短请求收益
+和 8K 不退化，1017 默认使用 `NUM_SPECULATIVE_TOKENS=3`。
 
 ### CED
 
@@ -372,9 +421,11 @@ MAX_IMAGES_PER_PROMPT=2
 ├── env.sh
 ├── launch.sh
 ├── patches/
+│   ├── vllm-adaptive-verification-bounds.patch
 │   └── vllm-deepseek-v41-responses.patch
 ├── setup_env.sh
 ├── results/
+│   ├── benchmark-1017-summary.json
 │   └── benchmark-summary.json
 └── tools/
     ├── benchmark-contexts.sh
@@ -392,7 +443,7 @@ MAX_IMAGES_PER_PROMPT=2
 ## 相关项目
 
 - [yhfgyyf/vllm-deepseek-v4-sm89](https://github.com/yhfgyyf/vllm-deepseek-v4-sm89)：本仓库使用的核心 vLLM/FlashInfer 实现。
-- [deepseek-ai/DeepSeek-V4.1-Flash](https://modelscope.cn/models/deepseek-ai/DeepSeek-V4.1-Flash)：模型 checkpoint。
+- [deepseek-ai/DeepSeek-V4.1-Flash-1017](https://modelscope.cn/models/deepseek-ai/DeepSeek-V4.1-Flash-1017)：模型 checkpoint。
 - [ykk648/deepseek-v4-flash-8x4090](https://github.com/ykk648/deepseek-v4-flash-8x4090)：上一代 V4-Flash 24GB 卡部署与引擎对比。
 
 ## License

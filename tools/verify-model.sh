@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MODEL_DIR="${1:-${MODEL_DIR:-$PROJECT_DIR/models/DeepSeek-V4.1-Flash}}"
+MODEL_DIR="${1:-${MODEL_DIR:-$PROJECT_DIR/models/DeepSeek-V4.1-Flash-1017}}"
 
 required=(config.json tokenizer.json tokenizer_config.json model.safetensors.index.json)
 for file in "${required[@]}"; do

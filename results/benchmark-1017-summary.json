@@ -1,0 +1,69 @@
+{
+  "date": "2026-10-19",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+  "hardware": "8x RTX 4090 48GB, SM89, no NVLink or CUDA P2P",
+  "profile": {
+    "tensor_parallel": 8,
+    "expert_parallel": true,
+    "context_length": 262144,
+    "max_num_seqs": 3,
+    "kv_cache_tokens": 971807,
+    "maximum_256k_concurrency": 3.71,
+    "kv_cache_dtype": "fp8",
+    "ced_prefill": true,
+    "prefix_caching": true,
+    "dspark_tokens": 3,
+    "adaptive_verification": true,
+    "cuda_graph_mode": "FULL_AND_PIECEWISE"
+  },
+  "single_request_random": [
+    {
+      "input_tokens_requested": 1024,
+      "output_tokens": 256,
+      "requests": 3,
+      "ttft_seconds": 0.251,
+      "output_throughput_tokens_per_second": 94.7,
+      "decode_tokens_per_second": 104.0
+    },
+    {
+      "input_tokens_requested": 8192,
+      "output_tokens": 512,
+      "requests": 3,
+      "ttft_seconds": 1.662,
+      "output_throughput_tokens_per_second": 89.7,
+      "decode_tokens_per_second": 126.2
+    },
+    {
+      "input_tokens_requested": 32768,
+      "output_tokens": 128,
+      "requests": 1,
+      "ttft_seconds": 4.442,
+      "output_throughput_tokens_per_second": 23.1,
+      "decode_tokens_per_second": 115.6
+    },
+    {
+      "input_tokens_requested": 261888,
+      "input_tokens_actual": 261918,
+      "output_tokens": 64,
+      "requests": 1,
+      "ttft_seconds": 59.501,
+      "output_throughput_tokens_per_second": 1.1,
+      "decode_tokens_per_second": 140.8
+    }
+  ],
+  "dspark_ab": {
+    "1k_256": {
+      "dspark_5_decode_tokens_per_second": 94.2,
+      "dspark_3_decode_tokens_per_second": 104.0
+    },
+    "8k_512": {
+      "dspark_5_decode_tokens_per_second": 123.6,
+      "dspark_3_decode_tokens_per_second": 126.2
+    }
+  },
+  "notes": [
+    "Decode throughput is 1000 / mean TPOT(ms).",
+    "The 1017 checkpoint has lower late-position DSpark acceptance on these random inputs than the previous checkpoint, so three draft tokens are the default.",
+    "The 261888-token boundary request completed without OOM."
+  ]
+}
